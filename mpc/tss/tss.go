@@ -8,48 +8,41 @@ import (
 	tssLib "github.com/bnb-chain/tss-lib/v2/tss"
 )
 
-// InitPartyIDs initializes PartyIDs and PeerContext
-func InitPartyIDs(nodeID string) (*tssLib.PartyID, *tssLib.PartyID, *tssLib.PeerContext, []*tssLib.PartyID) {
+// InitPartyIDs initializes PartyIDs and PeerContext for a single node
+func InitPartyIDs(nodeID string) (*tssLib.PartyID, *tssLib.PeerContext, []*tssLib.PartyID) {
 	log.Printf("[DEBUG] Initializing PartyIDs for node %s", nodeID)
 
-	// Create party IDs with fixed indices
-	var myPartyID, otherPartyID *tssLib.PartyID
+	// Create party IDs for both nodes
+	nodeA := tssLib.NewPartyID("1", "nodeA", big.NewInt(1))
+	nodeB := tssLib.NewPartyID("2", "nodeB", big.NewInt(2))
+
+	// Set up based on current node
+	var myPartyID *tssLib.PartyID
 	var partyIDs []*tssLib.PartyID
 
 	if nodeID == "nodeA" {
-		myPartyID = tssLib.NewPartyID("1", "nodeA", big.NewInt(1))
-		otherPartyID = tssLib.NewPartyID("2", "nodeB", big.NewInt(2))
-		partyIDs = []*tssLib.PartyID{myPartyID, otherPartyID}
+		myPartyID = nodeA
+		partyIDs = []*tssLib.PartyID{nodeA, nodeB}
 	} else if nodeID == "nodeB" {
-		myPartyID = tssLib.NewPartyID("2", "nodeB", big.NewInt(2))
-		otherPartyID = tssLib.NewPartyID("1", "nodeA", big.NewInt(1))
-		partyIDs = []*tssLib.PartyID{otherPartyID, myPartyID}
+		myPartyID = nodeB
+		partyIDs = []*tssLib.PartyID{nodeA, nodeB}
 	} else {
 		log.Fatalf("[ERROR] Unknown node ID: %s", nodeID)
 	}
 
-	// Log party IDs before sorting
-	log.Printf("[DEBUG] PartyIDs before sort:")
-	for _, pid := range partyIDs {
-		log.Printf("[DEBUG] PartyID: ID=%s, Moniker=%s, Index=%d", pid.Id, pid.Moniker, pid.Index)
-	}
-
-	// Sort party IDs by ID
-	partyIDs = tssLib.SortPartyIDs(partyIDs)
-
-	// Log party IDs after sorting
-	log.Printf("[DEBUG] PartyIDs after sort:")
-	for _, pid := range partyIDs {
-		log.Printf("[DEBUG] PartyID: ID=%s, Moniker=%s, Index=%d", pid.Id, pid.Moniker, pid.Index)
-	}
+	// Log party IDs
+	log.Printf("[DEBUG] PartyID: ID=%s, Moniker=%s, Index=%d", myPartyID.Id, myPartyID.Moniker, myPartyID.Index)
 
 	// Create peer context
 	peerCtx := tssLib.NewPeerContext(partyIDs)
 	log.Printf("[DEBUG] Created PeerContext with %d parties", len(partyIDs))
 
+	// Sort party IDs
+	partyIDs = tssLib.SortPartyIDs(partyIDs)
+
 	log.Printf("[DEBUG] Found PartyID for node %s: ID=%s, Moniker=%s, Index=%d",
 		nodeID, myPartyID.Id, myPartyID.Moniker, myPartyID.Index)
-	return myPartyID, otherPartyID, peerCtx, partyIDs
+	return myPartyID, peerCtx, partyIDs
 }
 
 // InitLocalParty initializes the LocalParty and channels

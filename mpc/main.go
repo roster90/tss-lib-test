@@ -1,22 +1,33 @@
 package main
 
 import (
-	"sync"
+	"flag"
+	"fmt"
+	"os"
 
 	"github.com/roster90/tss-lib-test/mpc/server"
 )
 
-var wg sync.WaitGroup
-
 func main() {
-	peers := map[string]string{
-		"nodeA": "localhost:50051",
-		"nodeB": "localhost:50052",
+	nodeName := flag.String("node", "", "Node name to run (A or B)")
+	port := flag.String("port", "", "Port to listen on")
+	flag.Parse()
+
+	if *nodeName == "" || *port == "" {
+		fmt.Println("Usage: ./tss-lib-test -node <A|B> -port <port>")
+		os.Exit(1)
 	}
 
-	wg.Add(2)
-	go server.StartNode("nodeA", ":50051", peers)
-	go server.StartNode("nodeB", ":50052", peers)
+	var nodeID string
+	switch *nodeName {
+	case "A":
+		nodeID = "nodeA"
+	case "B":
+		nodeID = "nodeB"
+	default:
+		fmt.Println("Invalid node name. Please use either A or B")
+		os.Exit(1)
+	}
 
-	wg.Wait()
+	server.StartNode(nodeID, ":"+*port)
 }
