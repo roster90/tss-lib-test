@@ -42,23 +42,28 @@ func InitPartyIDs(nodeID string) (*tssLib.PartyID, *tssLib.PeerContext, []*tssLi
 
 	log.Printf("[DEBUG] Found PartyID for node %s: ID=%s, Moniker=%s, Index=%d",
 		nodeID, myPartyID.Id, myPartyID.Moniker, myPartyID.Index)
+
 	return myPartyID, peerCtx, partyIDs
+
 }
 
 // InitLocalParty initializes the LocalParty and channels
 func InitLocalParty(params *tssLib.Parameters) (tssLib.Party, chan tssLib.Message, chan *keygen.LocalPartySaveData, chan error) {
+
 	log.Printf("[DEBUG] Initializing LocalParty with params: threshold=%d, parties=%d", params.Threshold(), params.PartyCount())
 
-	chOut := make(chan tssLib.Message, 2000)
+	chOut := make(chan tssLib.Message, 20000)
 	endCh := make(chan *keygen.LocalPartySaveData, 1)
 	errCh := make(chan error, 1)
 
 	party := keygen.NewLocalParty(params, chOut, endCh)
+
 	if party == nil {
 		log.Fatal("[ERROR] Failed to initialize party")
 	}
 
 	pid := party.PartyID()
 	log.Printf("[DEBUG] Created LocalParty: ID=%s, Moniker=%s, Index=%d", pid.Id, pid.Moniker, pid.Index)
+
 	return party, chOut, endCh, errCh
 }

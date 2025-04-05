@@ -3,6 +3,7 @@ package server
 import (
 	"log"
 	"net"
+	"time"
 
 	"github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
 	tssLib "github.com/bnb-chain/tss-lib/v2/tss"
@@ -12,16 +13,31 @@ import (
 	"google.golang.org/grpc/reflection"
 )
 
+// Session defines the session type
+type Session struct {
+	party          tssLib.Party
+	chOut          chan tssLib.Message
+	endCh          chan *keygen.LocalPartySaveData
+	startTime      time.Time
+	futureMessages map[int][]tssLib.Message
+}
+
 // MPCServer defines the gRPC service
 type MPCServer struct {
 	proto.UnimplementedMPCServiceServer
+	nodeID   string
 	partyID  *tssLib.PartyID
 	partyIDs []*tssLib.PartyID
 	params   *tssLib.Parameters
-	nodeID   string
-	party    tssLib.Party
-	chOut    chan tssLib.Message
-	endCh    chan *keygen.LocalPartySaveData
+}
+
+func NewMPCServer(nodeID string, partyID *tssLib.PartyID, partyIDs []*tssLib.PartyID, params *tssLib.Parameters) *MPCServer {
+	return &MPCServer{
+		nodeID:   nodeID,
+		partyID:  partyID,
+		partyIDs: partyIDs,
+		params:   params,
+	}
 }
 
 // StartNode initializes and starts a node
@@ -37,7 +53,6 @@ func StartNode(nodeID, port string) {
 	s := grpc.NewServer()
 	server := &MPCServer{
 		nodeID: nodeID,
-		endCh:  make(chan *keygen.LocalPartySaveData, 1),
 	}
 	proto.RegisterMPCServiceServer(s, server)
 	reflection.Register(s)

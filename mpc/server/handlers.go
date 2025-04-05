@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
 	tssLib "github.com/bnb-chain/tss-lib/v2/tss"
 	"github.com/roster90/tss-lib-test/mpc/handler"
 	"github.com/roster90/tss-lib-test/mpc/tss"
@@ -19,30 +18,19 @@ import (
 func (s *MPCServer) GenerateShares(ctx context.Context, req *proto.GenerateSharesRequest) (*proto.GenerateSharesResponse, error) {
 	log.Printf("[DEBUG] GenerateShares called for party %s (ID: %s, Index: %d)", s.partyID.Moniker, s.partyID.Id, s.partyID.Index)
 
-	// Check if party is initialized
-	if s.party == nil {
-		// Initialize party and channels
-		party, chOut, endCh, errCh := tss.InitLocalParty(s.params)
-		s.party = party
-		s.chOut = chOut
-		s.endCh = endCh
+	// Initialize party and channels
+	party, chOut, endCh, errCh := tss.InitLocalParty(s.params)
 
-		// Start error handler
-		go handler.ProcessErrors(errCh)
-		log.Printf("[DEBUG] Initialized new party for keygen with params: threshold=%d, partyCount=%d", s.params.Threshold(), len(s.partyIDs))
-	}
+	// Start error handler
+	go handler.ProcessErrors(errCh)
+	log.Printf("[DEBUG] Initialized new party for keygen with params: threshold=%d, partyCount=%d", s.params.Threshold(), len(s.partyIDs))
 
-	// Get the keygen party
-	keygenParty := s.party
-	log.Printf("[DEBUG] Party type: %T, State: %v", keygenParty, keygenParty)
-
-	// Start message handler for this session
-	go handler.ProcessMessages(s.nodeID, s.chOut, s.partyID)
-	log.Printf("[DEBUG] Started message handler for node %s", s.nodeID)
+	// Start message handler
+	go handler.ProcessMessages(s.nodeID, chOut, s.partyID, "default")
 
 	// Start keygen process
 	log.Printf("[DEBUG] Starting keygen process for party %s", s.partyID)
-	if err := keygenParty.Start(); err != nil {
+	if err := party.Start(); err != nil {
 		log.Printf("[ERROR] Failed to start keygen: %v", err)
 		return nil, fmt.Errorf("failed to start keygen: %v", err)
 	}
@@ -54,10 +42,10 @@ func (s *MPCServer) GenerateShares(ctx context.Context, req *proto.GenerateShare
 	case <-ctx.Done():
 		log.Printf("[DEBUG] Context cancelled while waiting for keygen")
 		return nil, ctx.Err()
-	case err := <-s.endCh:
+	case err := <-errCh:
 		log.Printf("[ERROR] Keygen failed: %v", err)
 		return nil, fmt.Errorf("keygen failed: %v", err)
-	case data := <-s.endCh:
+	case data := <-endCh:
 		if data == nil {
 			log.Printf("[ERROR] No data received from endCh")
 			return nil, fmt.Errorf("no data received")
@@ -93,27 +81,6 @@ func (s *MPCServer) GenerateShares(ctx context.Context, req *proto.GenerateShare
 func (s *MPCServer) ReceiveMessage(ctx context.Context, req *proto.MessageRequest) (*proto.MessageResponse, error) {
 	log.Printf("[DEBUG] Received message from %s", req.From)
 
-	// Initialize party if not already initialized
-	if s.party == nil {
-		log.Printf("[DEBUG] Initializing party for %s when receiving message", s.nodeID)
-		party, chOut, endCh, errCh := tss.InitLocalParty(s.params)
-		s.party = party
-		s.chOut = chOut
-		s.endCh = endCh
-
-		// Start error handler
-		go handler.ProcessErrors(errCh)
-		log.Printf("[DEBUG] Initialized new party for keygen with params: threshold=%d, partyCount=%d", s.params.Threshold(), len(s.partyIDs))
-
-		// Start keygen process for this node
-		log.Printf("[DEBUG] Starting keygen process for node %s", s.nodeID)
-		if err := s.party.Start(); err != nil {
-			log.Printf("[ERROR] Failed to start keygen for node %s: %v", s.nodeID, err)
-			return nil, fmt.Errorf("failed to start keygen: %v", err)
-		}
-		log.Printf("[DEBUG] Started keygen process for node %s", s.nodeID)
-	}
-
 	// Find the sender's PartyID
 	senderPartyID := findPartyID(req.From, s.partyIDs)
 	if senderPartyID == nil {
@@ -132,22 +99,26 @@ func (s *MPCServer) ReceiveMessage(ctx context.Context, req *proto.MessageReques
 		return nil, fmt.Errorf("failed to parse message: %v", err)
 	}
 
-	// Get current round and message round
-	currentRound := getCurrentRound(s.party)
-	messageRound := getMessageRound(msg)
-	log.Printf("[DEBUG] Current round: %d, Message round: %d", currentRound, messageRound)
+	// Initialize party if not already initialized
+	party, chOut, _, errCh := tss.InitLocalParty(s.params)
 
-	// Validate round number
-	if messageRound < currentRound {
-		log.Printf("[WARN] Ignoring message from round %d while in round %d", messageRound, currentRound)
-		return &proto.MessageResponse{}, nil
+	// Start error handler
+	go handler.ProcessErrors(errCh)
+	log.Printf("[DEBUG] Initialized new party for keygen with params: threshold=%d, partyCount=%d", s.params.Threshold(), len(s.partyIDs))
+
+	// Start message handler
+	go handler.ProcessMessages(s.nodeID, chOut, s.partyID, "default")
+
+	// Start keygen process
+	log.Printf("[DEBUG] Starting keygen process for node %s", s.nodeID)
+	if err := party.Start(); err != nil {
+		log.Printf("[ERROR] Failed to start keygen for node %s: %v", s.nodeID, err)
+		return nil, fmt.Errorf("failed to start keygen: %v", err)
 	}
-
-	log.Printf("[DEBUG] Successfully parsed message: Type=%T, From=%s, To=%v",
-		msg, msg.GetFrom().Moniker, msg.GetTo())
+	log.Printf("[DEBUG] Started keygen process for node %s", s.nodeID)
 
 	// Process the message
-	ok, err := s.party.Update(msg)
+	ok, err := party.Update(msg)
 	if !ok {
 		log.Printf("[ERROR] Failed to update party: %v", err)
 		return nil, fmt.Errorf("failed to update party: %v", err)
@@ -159,47 +130,88 @@ func (s *MPCServer) ReceiveMessage(ctx context.Context, req *proto.MessageReques
 
 // getCurrentRound returns the current round number of the party
 func getCurrentRound(party tssLib.Party) int {
-	switch p := party.(type) {
-	case *keygen.LocalParty:
-		// Get round from party's type
-		partyType := reflect.TypeOf(p).String()
-		log.Printf("[DEBUG] Party type: %s", partyType)
-		switch {
-		case strings.Contains(partyType, "round1"):
+	if party == nil {
+		log.Printf("[DEBUG] Party is nil")
+		return 0
+	}
+
+	// Get party type
+	partyType := reflect.TypeOf(party).String()
+	log.Printf("[DEBUG] Party type: %s", partyType)
+
+	// Check if it's a keygen party
+	if strings.Contains(partyType, "keygen.LocalParty") {
+		// If party is initialized and has a PartyID
+		if party.PartyID() != nil {
+			// Try to get round from message type
+			if msg, ok := party.(interface{ GetMessage() tssLib.Message }); ok {
+				if msg.GetMessage() != nil {
+					msgType := msg.GetMessage().Type()
+					log.Printf("[DEBUG] Current message type: %s", msgType)
+
+					switch {
+					case strings.Contains(msgType, "KGRound1Message"):
+						return 1
+					case strings.Contains(msgType, "KGRound2Message"):
+						return 2
+					case strings.Contains(msgType, "KGRound3Message"):
+						return 3
+					}
+				}
+			}
+
+			// If we can't determine round from message, check if we've processed any messages
+			if msgs := getProcessedMessages(party); len(msgs) > 0 {
+				lastMsg := msgs[len(msgs)-1]
+				msgType := lastMsg.Type()
+				log.Printf("[DEBUG] Last processed message type: %s", msgType)
+
+				switch {
+				case strings.Contains(msgType, "KGRound1Message"):
+					return 2 // If we've processed round 1 messages, we're in round 2
+				case strings.Contains(msgType, "KGRound2Message"):
+					return 3 // If we've processed round 2 messages, we're in round 3
+				}
+			}
+
+			log.Printf("[DEBUG] Party is initialized but no messages processed yet")
 			return 1
-		case strings.Contains(partyType, "round2"):
-			return 2
-		case strings.Contains(partyType, "round3"):
-			return 3
-		default:
-			log.Printf("[DEBUG] Unknown party type: %s", partyType)
-			return 0
 		}
+		log.Printf("[DEBUG] Party is not fully initialized")
+		return 0
+	}
+
+	// For other party types, try to determine round from type name
+	switch {
+	case strings.Contains(partyType, "round1"):
+		return 1
+	case strings.Contains(partyType, "round2"):
+		return 2
+	case strings.Contains(partyType, "round3"):
+		return 3
 	default:
-		log.Printf("[DEBUG] Unknown party type: %T", party)
+		log.Printf("[DEBUG] Unknown party type: %s", partyType)
 		return 0
 	}
 }
 
-// getMessageRound extracts the round number from the message type
-func getMessageRound(msg tssLib.Message) int {
-	// Get message type
-	msgType := reflect.TypeOf(msg).String()
-	log.Printf("[DEBUG] Full message type: %s", msgType)
+// Helper function to get processed messages
+func getProcessedMessages(party tssLib.Party) []tssLib.Message {
+	var messages []tssLib.Message
 
-	// Extract round from message type
-	switch {
-	case strings.Contains(msgType, "KGRound1Message"):
-		log.Printf("[DEBUG] Detected Round 1 message")
-		return 1
-	case strings.Contains(msgType, "KGRound2Message"):
-		log.Printf("[DEBUG] Detected Round 2 message")
-		return 2
-	case strings.Contains(msgType, "KGRound3Message"):
-		log.Printf("[DEBUG] Detected Round 3 message")
-		return 3
-	default:
-		log.Printf("[DEBUG] Unknown message type: %s", msgType)
-		return 0
+	// Try to get messages from party's state
+	if state, ok := party.(interface{ GetState() interface{} }); ok {
+		if stateValue := state.GetState(); stateValue != nil {
+			if msgs, ok := stateValue.([]tssLib.Message); ok {
+				return msgs
+			}
+		}
 	}
+
+	return messages
+}
+
+// Helper function to generate a unique session ID
+func generateSessionID() string {
+	return fmt.Sprintf("%d", time.Now().UnixNano())
 }
